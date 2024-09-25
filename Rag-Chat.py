@@ -1,5 +1,4 @@
 import streamlit as st
-import pandas as pd  # Add pandas for CSV reading
 from llama_index.llms.ollama import Ollama
 from pathlib import Path
 import qdrant_client
@@ -19,6 +18,19 @@ from llama_index.core.node_parser import HierarchicalNodeParser, get_leaf_nodes,
 from llama_index.core.storage.docstore import SimpleDocumentStore
 from llama_index.core.chat_engine import CondensePlusContextChatEngine
 
+import pandas as pd
+from llama_index.core import Document # Pastikan Anda mengimpor Document
+
+
+# CONTEXT_PROMPT = """You are an expert system with knowledge of interview questions.
+# These are documents that may be relevant to user question:\n\n
+# {context_str}
+# If you deem this piece of information is relevant, you may use it to answer user. 
+# Else then you can say that you DON'T KNOW."""
+
+# CONDENSE_PROMPT = """
+# """
+
 class Chatbot:
     def __init__(self, llm="llama3.1:latest", embedding_model="intfloat/multilingual-e5-large", vector_store=None):
         self.Settings = self.set_setting(llm, embedding_model)
@@ -37,36 +49,57 @@ class Chatbot:
         Settings.embed_model = FastEmbedEmbedding(
             model_name=embedding_model, cache_dir="./fastembed_cache")
         Settings.system_prompt = """
-                                You are a multi-lingual expert system who has knowledge, based on
-                                real-time data. You will always try to be helpful and try to help them
-                                answering their question. If you don't know the answer, say that you DON'T
-                                KNOW.
-                                """
+                                    You are an expert system knowledgeable in laptop purchasing consultation.
+                                    Always strive to assist the user by providing accurate and helpful answers.
+                                    If unsure, acknowledge that you don't know.
+                                 """
 
         return Settings
 
     @st.cache_resource(show_spinner=False)
-    def load_data(_arg, document_dir="./docs", csv_file="./docs/laptop_data.csv", vector_store=None):
+    def load_data(_arg, vector_store=None):
         with st.spinner(text="Loading and indexing – hang tight! This should take a few minutes."):
-            # Combine both documents and CSV reading into one
-            documents = []
-
-            # Read & load documents from folder
-            reader = SimpleDirectoryReader(input_dir=document_dir, recursive=True)
-            documents += reader.load_data()
-
-            # Read CSV data if provided
-            if Path(csv_file).exists():
+            # Membaca dan memuat dokumen dari folder
+            all_documents = []
+            for csv_file in Path("./docs").glob("*.csv"):
+                # Menggunakan pandas untuk membaca CSV
                 df = pd.read_csv(csv_file)
+                for index, row in df.iterrows():
+                    # Menggunakan row sebagai dokumen
+                    content = row.to_string(index=False)  # atau Anda bisa memilih kolom tertentu
+                    metadata = {
+                        "file_name": csv_file.name,
+                        "row_index": index,
+                        # Tambahkan metadata lain yang Anda butuhkan
+                    }
+                    # Buat objek Document dengan konten dan metadata
+                    document = Document(
+                        text=content, 
+                        metadata=metadata
+                    )
+                    all_documents.append(document)
+    
+            # Membuat chunk untuk setiap dokumen
+            chunks = []
+            for document in all_documents:
+                content = document.text  # Mengambil teks dari dokumen
+                start = 0
+                while start < len(content):
+                    end = start + Settings.chunk_size
+                    chunk = content[start:end]
+                    # Buat objek Document untuk chunk dengan metadata yang sama
+                    chunk_document = Document(
+                        text=chunk, 
+                        metadata=document.metadata
+                    )
+                    chunks.append(chunk_document)
+                    start += Settings.chunk_size - Settings.chunk_overlap
 
-                # Convert CSV rows into text documents
-                csv_documents = [' '.join([f"{col}: {row[col]}" for col in df.columns]) for _, row in df.iterrows()]
-                documents += csv_documents
-
-        # Create or use an existing vector store index
-        if vector_store is None:
-            index = VectorStoreIndex.from_documents(documents)
-        return index
+            if vector_store is None:
+                # Menggunakan VectorStoreIndex dari chunks yang dibuat
+                index = VectorStoreIndex.from_documents(chunks)
+    
+            return index
 
     def set_chat_history(self, messages):
         self.chat_history = [ChatMessage(role=message["role"], content=message["content"]) for message in messages]
@@ -83,9 +116,13 @@ class Chatbot:
             retriever=index.as_retriever(),
             llm=Settings.llm
         )
+        # return index.as_chat_engine(chat_mode="condense_plus_context", chat_store_key="chat_history", memory=self.memory, verbose=True)
+
+
+
 
 # Main Program
-st.title("Simple RAG Chatbot with Streamlit")
+st.title("Laptop Purchase Consultation Chatbot")
 chatbot = Chatbot()
 
 # Initialize chat history
@@ -105,6 +142,13 @@ for message in st.session_state.messages:
 chatbot.set_chat_history(st.session_state.messages)
 
 # React to user input
+# if prompt := st.chat_input("What is up?"):
+#     # Display user message in chat message container
+#     with st.chat_message("user"):
+#         st.markdown(prompt)
+#     # Add user message to chat history
+#     st.session_state.messages.append({"role": "user", "content": prompt})
+
 if prompt := st.chat_input("What is up?"):
     # Display user message in chat message container
     with st.chat_message("user"):
@@ -117,6 +161,6 @@ if prompt := st.chat_input("What is up?"):
         response = chatbot.chat_engine.chat(prompt)
         st.markdown(response.response)
 
-    # Add assistant's message to chat history
+    # Add user message to chat history
     st.session_state.messages.append(
         {"role": "assistant", "content": response.response})
