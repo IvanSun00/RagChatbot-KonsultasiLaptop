@@ -17,19 +17,9 @@ from llama_index.core.response_synthesizers import get_response_synthesizer
 from llama_index.core.node_parser import HierarchicalNodeParser, get_leaf_nodes, get_root_nodes
 from llama_index.core.storage.docstore import SimpleDocumentStore
 from llama_index.core.chat_engine import CondensePlusContextChatEngine
-
+from qdrant_client import QdrantClient
 import pandas as pd
-from llama_index.core import Document # Pastikan Anda mengimpor Document
-
-
-# CONTEXT_PROMPT = """You are an expert system with knowledge of interview questions.
-# These are documents that may be relevant to user question:\n\n
-# {context_str}
-# If you deem this piece of information is relevant, you may use it to answer user. 
-# Else then you can say that you DON'T KNOW."""
-
-# CONDENSE_PROMPT = """
-# """
+from llama_index.core import Document
 
 class Chatbot:
     def __init__(self, llm="llama3.1:latest", embedding_model="intfloat/multilingual-e5-large", vector_store=None):
@@ -49,17 +39,17 @@ class Chatbot:
         Settings.embed_model = FastEmbedEmbedding(
             model_name=embedding_model, cache_dir="./fastembed_cache")
         Settings.system_prompt = """
-                                    You are an expert system knowledgeable in laptop purchasing consultation.
-                                    Always strive to assist the user by providing accurate and helpful answers.
-                                    If unsure, acknowledge that you don't know.
-                                 """
+                                 You are an expert system knowledgeable in laptop purchasing consultation.
+                                 Always strive to assist the user by providing accurate and helpful answers.If unsure, acknowledge that you don't know. 
+                                 Jawab dalam bahasa indonesia
+                                """
 
         return Settings
 
     @st.cache_resource(show_spinner=False)
     def load_data(_arg, vector_store=None):
         with st.spinner(text="Loading and indexing – hang tight! This should take a few minutes."):
-            # Membaca dan memuat dokumen dari folder
+             # Membaca dan memuat dokumen dari folder
             all_documents = []
             for csv_file in Path("./docs").glob("*.csv"):
                 # Menggunakan pandas untuk membaca CSV
@@ -70,7 +60,6 @@ class Chatbot:
                     metadata = {
                         "file_name": csv_file.name,
                         "row_index": index,
-                        # Tambahkan metadata lain yang Anda butuhkan
                     }
                     # Buat objek Document dengan konten dan metadata
                     document = Document(
@@ -79,27 +68,31 @@ class Chatbot:
                     )
                     all_documents.append(document)
     
-            # Membuat chunk untuk setiap dokumen
-            chunks = []
-            for document in all_documents:
-                content = document.text  # Mengambil teks dari dokumen
-                start = 0
-                while start < len(content):
-                    end = start + Settings.chunk_size
-                    chunk = content[start:end]
-                    # Buat objek Document untuk chunk dengan metadata yang sama
-                    chunk_document = Document(
-                        text=chunk, 
-                        metadata=document.metadata
-                    )
-                    chunks.append(chunk_document)
-                    start += Settings.chunk_size - Settings.chunk_overlap
-
-            if vector_store is None:
-                # Menggunakan VectorStoreIndex dari chunks yang dibuat
-                index = VectorStoreIndex.from_documents(chunks)
+                # Membuat chunk untuk setiap dokumen
+                documents = []
+                for document in all_documents:
+                    content = document.text  # Mengambil teks dari dokumen
+                    start = 0
+                    while start < len(content):
+                        end = start + Settings.chunk_size
+                        chunk = content[start:end]
+                        # Buat objek Document untuk chunk dengan metadata yang sama
+                        chunk_document = Document(
+                            text=chunk, 
+                            metadata=document.metadata
+                        )
+                        documents.append(chunk_document)
+                        start += Settings.chunk_size - Settings.chunk_overlap
     
-            return index
+        if vector_store is None:
+            client = QdrantClient(
+                url=st.secrets["qdrant"]["connection_url"], 
+                api_key=st.secrets["qdrant"]["api_key"],
+            )
+            vector_store = QdrantVectorStore(client=client, collection_name="Documents")
+            storage_context = StorageContext.from_defaults(vector_store=vector_store)
+            index = VectorStoreIndex.from_documents(documents, storage_context=storage_context)
+        return index
 
     def set_chat_history(self, messages):
         self.chat_history = [ChatMessage(role=message["role"], content=message["content"]) for message in messages]
@@ -121,46 +114,86 @@ class Chatbot:
 
 
 
+# Sidebar untuk sesi chat
+def create_new_session():
+    session_id = f"session_{len(st.session_state.chat_sessions) + 1}"
+    st.session_state.chat_sessions[session_id] = {"name": "New Chat", "messages": []}
+    st.session_state.selected_session = session_id
+
+# Sidebar: Mengelola sesi chat
+with st.sidebar:
+    st.header("Chat Sessions")
+
+    # Inisialisasi sesi chat jika tidak ada
+    if "chat_sessions" not in st.session_state:
+        st.session_state.chat_sessions = {}
+
+    if not st.session_state.chat_sessions:
+        create_new_session()  # Buat sesi baru jika tidak ada
+
+    # Menampilkan daftar sesi yang ada
+    session_names = {session_id: session_data["name"] for session_id, session_data in st.session_state.chat_sessions.items()}
+    selected_name = st.selectbox("Pilih sesi", list(session_names.values()))
+
+    # Mendapatkan sesi yang dipilih berdasarkan nama
+    if selected_name:
+        selected_session_id = list(st.session_state.chat_sessions.keys())[list(session_names.values()).index(selected_name)]
+        st.session_state.selected_session = selected_session_id
+
+    # Opsi untuk memulai sesi baru
+    if st.button("Mulai Sesi Baru"):
+        create_new_session()
+
 # Main Program
 st.title("Laptop Purchase Consultation Chatbot")
 chatbot = Chatbot()
 
-# Initialize chat history
-if "messages" not in st.session_state:
-    st.session_state.messages = [
-        {"role": "assistant",
-         "content": "Hello there 👋!\n\n Good to see you, how may I help you today? Feel free to ask me 😁"}
-    ]
+# Suggested questions
+st.markdown("**Pertanyaan Umum:**")
+faq_questions = [
+    "Apa rekomendasi laptop untuk gaming?",
+    "Berapa budget ideal untuk laptop kerja?",
+    "Laptop apa yang memiliki performa tinggi?",
+    "Apakah RAM 8GB cukup untuk penggunaan sehari-hari?"
+]
+# Menampilkan chat history dari sesi yang dipilih
+if st.session_state.selected_session:
+    session_data = st.session_state.chat_sessions[st.session_state.selected_session]
+    session_messages = session_data["messages"]
 
-print(chatbot.chat_store.store)
+    for message in session_messages:
+        with st.chat_message(message["role"]):
+            st.markdown(message["content"])
 
-# Display chat messages from history on app rerun
-for message in st.session_state.messages:
-    with st.chat_message(message["role"]):
-        st.markdown(message["content"])
+    chatbot.set_chat_history(session_messages)
 
-chatbot.set_chat_history(st.session_state.messages)
+    for question in faq_questions:
+        if st.button(question):
+            session_messages.append({"role": "user", "content": question})
 
-# React to user input
-# if prompt := st.chat_input("What is up?"):
-#     # Display user message in chat message container
-#     with st.chat_message("user"):
-#         st.markdown(prompt)
-#     # Add user message to chat history
-#     st.session_state.messages.append({"role": "user", "content": prompt})
+            with st.chat_message("assistant"):
+                response = chatbot.chat_engine.chat(question)
+                st.markdown(response.response)
+            session_messages.append({"role": "assistant", "content": response.response})
+            
+    # Reaksi terhadap input pengguna
+    if prompt := st.chat_input("Ada yang bisa saya bantu?"):
+        # Menampilkan pesan pengguna
+        with st.chat_message("user"):
+            st.markdown(prompt)
 
-if prompt := st.chat_input("What is up?"):
-    # Display user message in chat message container
-    with st.chat_message("user"):
-        st.markdown(prompt)
+        # Menambahkan pesan pengguna ke history sesi
+        session_messages.append({"role": "user", "content": prompt})
 
-    # Add user message to chat history
-    st.session_state.messages.append({"role": "user", "content": prompt})
+        # Update nama sesi dengan pesan terakhir dari pengguna
+        session_data["name"] = prompt[:50]
 
-    with st.chat_message("assistant"):
-        response = chatbot.chat_engine.chat(prompt)
-        st.markdown(response.response)
+        # Mendapatkan respons dari chatbot
+        with st.chat_message("assistant"):
+            response = chatbot.chat_engine.chat(prompt)
+            st.markdown(response.response)
 
-    # Add user message to chat history
-    st.session_state.messages.append(
-        {"role": "assistant", "content": response.response})
+        # Menambahkan respons chatbot ke history sesi
+        session_messages.append({"role": "assistant", "content": response.response})
+else:
+    st.write("Silakan pilih atau mulai sesi baru.")
