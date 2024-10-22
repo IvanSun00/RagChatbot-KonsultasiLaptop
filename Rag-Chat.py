@@ -20,6 +20,8 @@ from llama_index.core.chat_engine import CondensePlusContextChatEngine
 from qdrant_client import QdrantClient
 import pandas as pd
 from llama_index.core import Document
+from llama_index.embeddings.ollama import OllamaEmbedding
+from bs4 import BeautifulSoup
 
 class Chatbot:
     def __init__(self, llm="llama3.1:latest", embedding_model="intfloat/multilingual-e5-large", vector_store=None):
@@ -36,8 +38,12 @@ class Chatbot:
 
     def set_setting(_arg, llm, embedding_model):
         Settings.llm = Ollama(model=llm, base_url="http://127.0.0.1:11434")
-        Settings.embed_model = FastEmbedEmbedding(
-            model_name=embedding_model, cache_dir="./fastembed_cache")
+        # Settings.embed_model = FastEmbedEmbedding(
+        #     model_name=embedding_model, cache_dir="./fastembed_cache")
+        Settings.embed_model = OllamaEmbedding(
+            base_url="http://127.0.0.1:11434",
+            model_name="mxbai-embed-large:latest"
+        )
         Settings.system_prompt = """
                                  You are an expert system knowledgeable in laptop purchasing consultation.
                                  Always strive to assist the user by providing accurate and helpful answers.If unsure, acknowledge that you don't know. 
@@ -63,7 +69,7 @@ class Chatbot:
                     }
                     # Buat objek Document dengan konten dan metadata
                     document = Document(
-                        text=content, 
+                        text=content,
                         metadata=metadata
                     )
                     all_documents.append(document)
@@ -151,10 +157,9 @@ chatbot = Chatbot()
 # Suggested questions
 st.markdown("**Pertanyaan Umum:**")
 faq_questions = [
-    "Apa rekomendasi laptop untuk gaming?",
+    "rekomendasi laptop dengan ram 16gb?",
     "Berapa budget ideal untuk laptop kerja?",
-    "Laptop apa yang memiliki performa tinggi?",
-    "Apakah RAM 8GB cukup untuk penggunaan sehari-hari?"
+    "Rekomendasi laptop merek asus?"
 ]
 # Menampilkan chat history dari sesi yang dipilih
 if st.session_state.selected_session:
