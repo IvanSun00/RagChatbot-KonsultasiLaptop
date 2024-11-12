@@ -5,8 +5,6 @@ import qdrant_client
 from llama_index.core import SimpleDirectoryReader, VectorStoreIndex, Settings, PromptTemplate
 from llama_index.core.storage.storage_context import StorageContext
 from llama_index.vector_stores.qdrant import QdrantVectorStore
-from llama_index.embeddings.fastembed import FastEmbedEmbedding
-
 from llama_index.core.llms import ChatMessage
 from llama_index.core.storage.chat_store import SimpleChatStore
 from llama_index.core.memory import ChatMemoryBuffer
@@ -73,31 +71,32 @@ class Chatbot:
                         metadata=metadata
                     )
                     all_documents.append(document)
-    
-                # Membuat chunk untuk setiap dokumen
-                documents = []
-                for document in all_documents:
-                    content = document.text  # Mengambil teks dari dokumen
-                    start = 0
-                    while start < len(content):
-                        end = start + Settings.chunk_size
-                        chunk = content[start:end]
-                        # Buat objek Document untuk chunk dengan metadata yang sama
-                        chunk_document = Document(
-                            text=chunk, 
-                            metadata=document.metadata
-                        )
-                        documents.append(chunk_document)
-                        start += Settings.chunk_size - Settings.chunk_overlap
+
+            # Membuat chunk untuk setiap dokumen
+            documents = []
+            for document in all_documents:
+                content = document.text  # Mengambil teks dari dokumen
+                start = 0
+                while start < len(content):
+                    end = start + Settings.chunk_size
+                    chunk = content[start:end]
+                    # Buat objek Document untuk chunk dengan metadata yang sama
+                    chunk_document = Document(
+                        text=chunk, 
+                        metadata=document.metadata
+                    )
+                    documents.append(chunk_document)
+                    start += Settings.chunk_size - Settings.chunk_overlap
     
         if vector_store is None:
-            client = QdrantClient(
-                url=st.secrets["qdrant"]["connection_url"], 
-                api_key=st.secrets["qdrant"]["api_key"],
-            )
-            vector_store = QdrantVectorStore(client=client, collection_name="Documents")
-            storage_context = StorageContext.from_defaults(vector_store=vector_store)
-            index = VectorStoreIndex.from_documents(documents, storage_context=storage_context)
+            # client = QdrantClient(
+            #     url=st.secrets["qdrant"]["connection_url"], 
+            #     api_key=st.secrets["qdrant"]["api_key"],
+            # )
+            # vector_store = QdrantVectorStore(client=client, collection_name="Documents")
+            # storage_context = StorageContext.from_defaults(vector_store=vector_store)
+            # index = VectorStoreIndex.from_documents(documents, storage_context=storage_context)
+            index = VectorStoreIndex.from_documents(documents)
         return index
 
     def set_chat_history(self, messages):
