@@ -5,6 +5,8 @@ import qdrant_client
 from llama_index.core import SimpleDirectoryReader, VectorStoreIndex, Settings, PromptTemplate
 from llama_index.core.storage.storage_context import StorageContext
 from llama_index.vector_stores.qdrant import QdrantVectorStore
+from llama_index.embeddings.ollama import OllamaEmbedding
+
 from llama_index.core.llms import ChatMessage
 from llama_index.core.storage.chat_store import SimpleChatStore
 from llama_index.core.memory import ChatMemoryBuffer
@@ -16,13 +18,11 @@ from llama_index.core.node_parser import HierarchicalNodeParser, get_leaf_nodes,
 from llama_index.core.storage.docstore import SimpleDocumentStore
 from llama_index.core.chat_engine import CondensePlusContextChatEngine
 from qdrant_client import QdrantClient
-import pandas as pd
-from llama_index.core import Document
-from llama_index.embeddings.ollama import OllamaEmbedding
-from bs4 import BeautifulSoup
+
+
 
 class Chatbot:
-    def __init__(self, llm="llama3.1:latest", embedding_model="intfloat/multilingual-e5-large", vector_store=None):
+    def __init__(self, llm="qwen2.5:3b", embedding_model="intfloat/multilingual-e5-large", vector_store=None):
         self.Settings = self.set_setting(llm, embedding_model)
 
         # Indexing
@@ -36,16 +36,11 @@ class Chatbot:
 
     def set_setting(_arg, llm, embedding_model):
         Settings.llm = Ollama(model=llm, base_url="http://127.0.0.1:11434")
-        # Settings.embed_model = FastEmbedEmbedding(
-        #     model_name=embedding_model, cache_dir="./fastembed_cache")
-        Settings.embed_model = OllamaEmbedding(
-            base_url="http://127.0.0.1:11434",
-            model_name="mxbai-embed-large:latest"
-        )
+        Settings.embed_model = OllamaEmbedding(base_url="http://127.0.0.1:11434", model_name="mxbai-embed-large:latest")
         Settings.system_prompt = """
-                                 You are an expert system knowledgeable in laptop purchasing consultation.
-                                 Always strive to assist the user by providing accurate and helpful answers.If unsure, acknowledge that you don't know. 
-                                 Jawab dalam bahasa indonesia
+                                You are an expert system specialized in providing laptop purchase consultations and education about laptop technologies. 
+                                You have access to detailed information about laptops, including specifications, prices, and comparisons. 
+                                Always provide clear and helpful guidance. If you don't know the answer, say you DON'T KNOW.
                                 """
 
         return Settings
@@ -53,50 +48,18 @@ class Chatbot:
     @st.cache_resource(show_spinner=False)
     def load_data(_arg, vector_store=None):
         with st.spinner(text="Loading and indexing – hang tight! This should take a few minutes."):
-             # Membaca dan memuat dokumen dari folder
-            all_documents = []
-            for csv_file in Path("./docs").glob("*.csv"):
-                # Menggunakan pandas untuk membaca CSV
-                df = pd.read_csv(csv_file)
-                for index, row in df.iterrows():
-                    # Menggunakan row sebagai dokumen
-                    content = row.to_string(index=False)  # atau Anda bisa memilih kolom tertentu
-                    metadata = {
-                        "file_name": csv_file.name,
-                        "row_index": index,
-                    }
-                    # Buat objek Document dengan konten dan metadata
-                    document = Document(
-                        text=content,
-                        metadata=metadata
-                    )
-                    all_documents.append(document)
+            # Read & load document from folder
+            reader = SimpleDirectoryReader(input_dir="./docs", recursive=True)
+            documents = reader.load_data()
 
-            # Membuat chunk untuk setiap dokumen
-            documents = []
-            for document in all_documents:
-                content = document.text  # Mengambil teks dari dokumen
-                start = 0
-                while start < len(content):
-                    end = start + Settings.chunk_size
-                    chunk = content[start:end]
-                    # Buat objek Document untuk chunk dengan metadata yang sama
-                    chunk_document = Document(
-                        text=chunk, 
-                        metadata=document.metadata
-                    )
-                    documents.append(chunk_document)
-                    start += Settings.chunk_size - Settings.chunk_overlap
-    
         if vector_store is None:
-            # client = QdrantClient(
-            #     url=st.secrets["qdrant"]["connection_url"], 
-            #     api_key=st.secrets["qdrant"]["api_key"],
-            # )
-            # vector_store = QdrantVectorStore(client=client, collection_name="Documents")
-            # storage_context = StorageContext.from_defaults(vector_store=vector_store)
-            # index = VectorStoreIndex.from_documents(documents, storage_context=storage_context)
-            index = VectorStoreIndex.from_documents(documents)
+            client = QdrantClient(
+                url=st.secrets["qdrant"]["connection_url"], 
+                api_key=st.secrets["qdrant"]["api_key"],
+            )
+            vector_store = QdrantVectorStore(client=client, collection_name="Documents")
+            storage_context = StorageContext.from_defaults(vector_store=vector_store)
+            index = VectorStoreIndex.from_documents(documents, storage_context=storage_context)
         return index
 
     def set_chat_history(self, messages):
@@ -115,6 +78,7 @@ class Chatbot:
             llm=Settings.llm
         )
         # return index.as_chat_engine(chat_mode="condense_plus_context", chat_store_key="chat_history", memory=self.memory, verbose=True)
+
 
 
 
